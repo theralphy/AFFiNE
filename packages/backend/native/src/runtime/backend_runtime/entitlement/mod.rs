@@ -7,7 +7,7 @@ mod mutation;
 mod subscription;
 
 use affine_core::access_control::{
-  AccessContext, AccessGrant, Deployment as CoreDeployment, EntitlementFact, QuotaSubject, TargetType,
+  AccessContext, AccessGrant, Deployment as CoreDeployment, EntitlementFact, Plan, QuotaSubject, TargetType,
   resolve_entitlements, resolve_quota_subject,
 };
 use chrono::{DateTime, Utc};
@@ -107,7 +107,7 @@ fn resolve_grant(
       signed_payload: row.signed_payload.as_deref(),
     })
     .collect::<Vec<_>>();
-  resolve_entitlements(
+  let mut grant = resolve_entitlements(
     &AccessContext {
       deployment: match deployment {
         Deployment::Cloud => CoreDeployment::Cloud,
@@ -119,8 +119,17 @@ fn resolve_grant(
       license_public_key: AFFINE_PRO_PUBLIC_KEY,
     },
     &facts,
-  )
+  );
+  if deployment == Deployment::SelfHosted && grant.plan == Plan::SelfHostedFree {
+    grant.limits.seat_limit = SELFHOST_UNLIMITED_SEATS;
+  }
+  grant
 }
+
+/// Self-hosted deployments do not meter seats on the free plan. The value
+/// leaves headroom for the invite policy, which multiplies the seat limit by
+/// two, so it must stay below `i32::MAX / 2`.
+pub(crate) const SELFHOST_UNLIMITED_SEATS: i32 = 1_000_000_000;
 
 pub(super) async fn resolve_workspace_entitlement(
   tx: &mut Transaction<'_, Postgres>,

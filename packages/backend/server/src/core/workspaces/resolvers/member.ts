@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid';
 
 import {
   ActionForbidden,
+  ActionForbiddenOnNonTeamWorkspace,
   AlreadyInSpace,
   Cache,
   CanNotRevokeYourself,
@@ -24,6 +25,7 @@ import {
   isValidCacheTtl,
   mapAnyError,
   MemberNotFoundInSpace,
+  NewOwnerIsNotActiveMember,
   NoMoreSeat,
   OwnerCanNotLeaveWorkspace,
   QueryTooLong,
@@ -94,6 +96,42 @@ export class WorkspaceMemberResolver {
     private readonly inviteQuota: InviteQuotaAssertService,
     private readonly runtime: BackendRuntimeProvider
   ) {}
+
+  /**
+   * Translate seat activation failures from the native runtime into the
+   * user-facing errors the clients understand. Unknown codes are rethrown.
+   */
+  private throwSeatActivationError(
+    error: unknown,
+    workspaceId: string,
+    notFound: () => Error
+  ): never {
+    switch (backendRuntimeErrorCode(error)) {
+      case 'seat_limit':
+        throw new NoMoreSeat({ spaceId: workspaceId });
+      case 'workspace_invitation_not_found':
+        throw notFound();
+      case 'workspace_invitation_account_mismatch':
+        throw new InvitationAccountMismatch();
+      case 'workspace_users_manage_forbidden':
+        throw new SpaceAccessDenied({ spaceId: workspaceId });
+      case 'workspace_invitation_not_activatable':
+      case 'workspace_invitation_invalid':
+        throw new InvalidInvitation();
+      case 'workspace_member_conflict':
+        throw new AlreadyInSpace({ spaceId: workspaceId });
+    }
+    throw error;
+  }
+
+  /** Only used to pick an error message, so a failed lookup is not fatal. */
+  private async isTeamWorkspace(workspaceId: string) {
+    try {
+      return await this.workspaceService.isTeamWorkspace(workspaceId);
+    } catch {
+      return true;
+    }
+  }
 
   private async assertWorkspaceNameCanInvite(workspaceId: string) {
     const workspace = await this.workspaceService.getWorkspaceInfo(workspaceId);
@@ -418,10 +456,11 @@ export class WorkspaceMemberResolver {
             requireManagePermission: true,
           });
         } catch (error) {
-          if (backendRuntimeErrorCode(error) === 'seat_limit') {
-            throw new NoMoreSeat({ spaceId: workspaceId });
-          }
-          throw error;
+          this.throwSeatActivationError(
+            error,
+            workspaceId,
+            () => new MemberNotFoundInSpace({ spaceId: workspaceId })
+          );
         }
 
         this.event.emit('workspace.members.updated', {
@@ -460,8 +499,13 @@ export class WorkspaceMemberResolver {
         role = 'owner';
         break;
     }
+    const previousOwner =
+      role === 'owner'
+        ? await this.models.workspaceUser.findOwner(workspaceId)
+        : null;
+    let result: Record<string, unknown>;
     try {
-      await this.runtime.executeDomainCommandV1({
+      result = await this.runtime.executeDomainCommandV1({
         command: 'transition_workspace_role',
         actorUserId: user.id,
         workspaceId,
@@ -469,12 +513,43 @@ export class WorkspaceMemberResolver {
         newRole: role,
       });
     } catch (error) {
-      if (backendRuntimeErrorCode(error) === 'domain_permission_denied') {
-        throw new SpaceAccessDenied({ spaceId: workspaceId });
+      switch (backendRuntimeErrorCode(error)) {
+        case 'domain_permission_denied':
+          // Admin roles need a commercial (team) entitlement; say so instead
+          // of reporting a generic access error.
+          if (role === 'admin' && !(await this.isTeamWorkspace(workspaceId))) {
+            throw new ActionForbiddenOnNonTeamWorkspace();
+          }
+          throw new SpaceAccessDenied({ spaceId: workspaceId });
+        case 'workspace_member_not_found':
+          throw new MemberNotFoundInSpace({ spaceId: workspaceId });
+        case 'target_member_not_active':
+          throw new NewOwnerIsNotActiveMember();
       }
       throw error;
     }
     this.event.emit('workspace.members.updated', { workspaceId });
+
+    // The native runtime only writes the role; the mail and realtime listeners
+    // still rely on these events.
+    if (role === 'owner') {
+      if (previousOwner && previousOwner.id !== userId) {
+        this.event.emit('workspace.owner.changed', {
+          workspaceId,
+          from: previousOwner.id,
+          to: userId,
+        });
+      }
+    } else if (
+      result.previousRole !== role &&
+      (await this.models.workspaceUser.getActive(workspaceId, userId))
+    ) {
+      this.event.emit('workspace.members.roleChanged', {
+        userId,
+        workspaceId,
+        role: newRole,
+      });
+    }
 
     return true;
   }
@@ -581,6 +656,11 @@ export class WorkspaceMemberResolver {
       if (user.id !== role.userId) {
         throw new InvitationAccountMismatch();
       }
+      // Accepting turns the invitation into a member row with the same id, so
+      // reopening an old invite link lands here.
+      if (role.status === WorkspaceMemberStatus.Accepted) {
+        throw new AlreadyInSpace({ spaceId: role.workspaceId });
+      }
 
       await this.acceptInvitationByEmail(role);
     } else {
@@ -670,10 +750,11 @@ export class WorkspaceMemberResolver {
         requireManagePermission: false,
       });
     } catch (error) {
-      if (backendRuntimeErrorCode(error) === 'seat_limit') {
-        throw new NoMoreSeat({ spaceId: role.workspaceId });
-      }
-      throw error;
+      this.throwSeatActivationError(
+        error,
+        role.workspaceId,
+        () => new InvalidInvitation()
+      );
     }
 
     this.event.emit('workspace.members.updated', {

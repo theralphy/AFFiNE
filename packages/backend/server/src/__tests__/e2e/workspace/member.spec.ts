@@ -20,6 +20,8 @@ import {
 } from '@prisma/client';
 
 import { EntitlementService } from '../../../core/entitlement';
+import type { SendMailCommand } from '../../../core/mail/types';
+import type { MailName } from '../../../mails';
 import {
   type InvitationNotification,
   type InvitationReviewDeclinedNotification,
@@ -73,6 +75,19 @@ async function waitForInvitationNotification(userId: string) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   throw new Error('Invitation notification was not created');
+}
+
+async function waitForMailTo<Mail extends MailName>(name: Mail, to: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const call = app.mails.send
+      .getCalls()
+      .find(call => call.args[0].name === name && call.args[0].to === to);
+    if (call) {
+      return call.args[0] as SendMailCommand & { name: Mail };
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error(`Mail ${name} to ${to} was not sent`);
 }
 
 e2e('should invite a user', async t => {
@@ -335,6 +350,118 @@ e2e('should map every workspace role transition without fallback', async t => {
     }
   }
 });
+
+e2e('should send role changed mails when a member role changes', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const member = await app.create(Mockers.User);
+  await grantTeamPlan(workspace.id, 3);
+  await app.create(Mockers.WorkspaceUser, {
+    workspaceId: workspace.id,
+    userId: member.id,
+  });
+
+  await app.login(owner);
+  await app.gql({
+    query: grantWorkspaceTeamMemberMutation,
+    variables: {
+      workspaceId: workspace.id,
+      userId: member.id,
+      permission: Permission.Admin,
+    },
+  });
+  const promoted = await waitForMailTo('TeamBecomeAdmin', member.email);
+  t.is(promoted.props.workspace.$$workspaceId, workspace.id);
+
+  await app.gql({
+    query: grantWorkspaceTeamMemberMutation,
+    variables: {
+      workspaceId: workspace.id,
+      userId: member.id,
+      permission: Permission.Collaborator,
+    },
+  });
+  const demoted = await waitForMailTo('TeamBecomeCollaborator', member.email);
+  t.is(demoted.props.workspace.$$workspaceId, workspace.id);
+});
+
+e2e('should send ownership mails when ownership is transferred', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const member = await app.create(Mockers.User);
+  await app.create(Mockers.WorkspaceUser, {
+    workspaceId: workspace.id,
+    userId: member.id,
+  });
+
+  await app.login(owner);
+  const { grantMember } = await app.gql({
+    query: grantWorkspaceTeamMemberMutation,
+    variables: {
+      workspaceId: workspace.id,
+      userId: member.id,
+      permission: Permission.Owner,
+    },
+  });
+  t.true(grantMember);
+
+  const transferred = await waitForMailTo('OwnershipTransferred', owner.email);
+  t.is(transferred.props.workspace.$$workspaceId, workspace.id);
+  const received = await waitForMailTo('OwnershipReceived', member.email);
+  t.is(received.props.workspace.$$workspaceId, workspace.id);
+});
+
+e2e('should explain that admin roles need a team workspace', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const member = await app.create(Mockers.User);
+  await app.create(Mockers.WorkspaceUser, {
+    workspaceId: workspace.id,
+    userId: member.id,
+  });
+
+  await app.login(owner);
+  await t.throwsAsync(
+    app.gql({
+      query: grantWorkspaceTeamMemberMutation,
+      variables: {
+        workspaceId: workspace.id,
+        userId: member.id,
+        permission: Permission.Admin,
+      },
+    }),
+    { message: 'A Team workspace is required to perform this action.' }
+  );
+});
+
+e2e(
+  'should report already joined when an accepted invitation is reused',
+  async t => {
+    const { owner, workspace } = await createWorkspace();
+    const member = await app.create(Mockers.User);
+
+    await app.login(owner);
+    const { inviteMembers } = await app.gql({
+      query: inviteByEmailsMutation,
+      variables: {
+        emails: [member.email],
+        workspaceId: workspace.id,
+      },
+    });
+    const inviteId = inviteMembers[0].inviteId!;
+
+    await app.login(member);
+    await app.gql({
+      query: acceptInviteByInviteIdMutation,
+      variables: { workspaceId: workspace.id, inviteId },
+    });
+
+    await t.throwsAsync(
+      app.gql({
+        query: acceptInviteByInviteIdMutation,
+        variables: { workspaceId: workspace.id, inviteId },
+      }),
+      { message: `You have already joined in Space ${workspace.id}.` }
+    );
+  }
+);
 
 e2e('should approve a user on under review', async t => {
   const { owner, workspace } = await createWorkspace();

@@ -239,6 +239,10 @@ export class InviteQuotaAssertService {
     actorUserId: string;
     workspaceId: string;
   }) {
+    // Invite rate limits exist to stop spam on the hosted service. A
+    // self-hosted server controls its own sign-ups, so they are not applied.
+    if (env.selfhosted) return;
+
     const decision = await this.runtime.evaluateWorkspaceInviteLinkV1(
       input.actorUserId,
       input.workspaceId
@@ -263,6 +267,12 @@ export class InviteQuotaAssertService {
     targetDomains: RuntimeQuotaTargetDomainInput[];
     source?: RuntimeQuotaSourceInput;
   }): Promise<InviteQuotaAdmission> {
+    if (env.selfhosted) {
+      return {
+        decision: { allowed: true, requested: input.targetCount },
+      };
+    }
+
     const start = Date.now();
     const seatQuota = await this.quota.getWorkspaceSeatQuota(input.workspaceId);
     let decision: RuntimeWorkspaceInviteQuotaDecision;

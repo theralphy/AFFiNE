@@ -98,9 +98,11 @@ export class Env implements AppEnv {
     Namespace.Production,
     Object.values(Namespace)
   );
-  DEPLOYMENT_TYPE = this.dev
-    ? DeploymentType.Affine
-    : DeploymentType.Selfhosted;
+  DEPLOYMENT_TYPE = readEnv(
+    'DEPLOYMENT_TYPE',
+    DeploymentType.Selfhosted,
+    Object.values(DeploymentType)
+  );
   FLAVOR = readEnv('SERVER_FLAVOR', Flavor.AllInOne, Object.values(Flavor));
   platform = readEnv('DEPLOYMENT_PLATFORM', Platform.Unknown);
   version = pkg.version;
@@ -116,13 +118,11 @@ export class Env implements AppEnv {
           ? appPath
           : join(homedir(), '.affine/config/config.json'));
       // TODO(0.27.5): Remove the deployment env fallback after old self-host configs are upgraded.
-      const legacyDeploymentType =
-        process.env.DEPLOYMENT_TYPE ?? this.DEPLOYMENT_TYPE;
       this.#serverConfigHandle = new ServerConfigHandle(
         configPath,
-        legacyDeploymentType === DeploymentType.Affine
+        this.DEPLOYMENT_TYPE === DeploymentType.Affine
           ? 'cloud'
-          : legacyDeploymentType
+          : this.DEPLOYMENT_TYPE
       );
     }
     return this.#serverConfigHandle;
