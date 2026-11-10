@@ -221,6 +221,36 @@ export class UserModel extends BaseModel {
     return user;
   }
 
+  /**
+   * Search registered, enabled accounts by name or email, for picking
+   * existing accounts to add to a workspace.
+   */
+  async searchRegistered(options: {
+    keyword?: string | null;
+    skip?: number;
+    take?: number;
+  }): Promise<WorkspaceUser[]> {
+    const keyword = options.keyword?.trim();
+    return this.db.user.findMany({
+      select: workspaceUserSelect,
+      where: {
+        registered: true,
+        disabled: false,
+        ...(keyword
+          ? {
+              OR: [
+                { email: { contains: keyword, mode: 'insensitive' } },
+                { name: { contains: keyword, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { name: 'asc' },
+      skip: options.skip,
+      take: options.take,
+    });
+  }
+
   private buildListWhere(options: {
     keyword?: string | null;
     features?: UserFeatureName[] | null;

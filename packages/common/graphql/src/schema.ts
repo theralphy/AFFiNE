@@ -7892,6 +7892,39 @@ export type InviteByEmailsMutation = {
   }>;
 };
 
+export type AddWorkspaceMembersMutationVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  userIds: Array<Scalars['String']['input']> | Scalars['String']['input'];
+}>;
+
+export type AddWorkspaceMembersMutation = {
+  __typename?: 'Mutation';
+  addWorkspaceMembers: Array<{
+    __typename?: 'AddMemberResult';
+    userId: string;
+    error: any | null;
+  }>;
+};
+
+export type WorkspaceMemberCandidatesQueryVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  query?: InputMaybe<Scalars['String']['input']>;
+  skip?: InputMaybe<Scalars['Int']['input']>;
+  take?: InputMaybe<Scalars['Int']['input']>;
+}>;
+
+export type WorkspaceMemberCandidatesQuery = {
+  __typename?: 'Query';
+  workspaceMemberCandidates: Array<{
+    __typename?: 'WorkspaceMemberCandidate';
+    id: string;
+    name: string;
+    email: string;
+    avatarUrl: string | null;
+    status: WorkspaceMemberStatus | null;
+  }>;
+};
+
 export type AcceptInviteByInviteIdMutationVariables = Exact<{
   workspaceId: Scalars['String']['input'];
   inviteId: Scalars['String']['input'];
@@ -8243,6 +8276,11 @@ export type Queries =
       name: 'getPublicUserByIdQuery';
       variables: GetPublicUserByIdQueryVariables;
       response: GetPublicUserByIdQuery;
+    }
+  | {
+      name: 'workspaceMemberCandidatesQuery';
+      variables: WorkspaceMemberCandidatesQueryVariables;
+      response: WorkspaceMemberCandidatesQuery;
     }
   | {
       name: 'getRecentlyUpdatedDocsQuery';
@@ -8910,6 +8948,11 @@ export type Mutations =
       name: 'inviteByEmailsMutation';
       variables: InviteByEmailsMutationVariables;
       response: InviteByEmailsMutation;
+    }
+  | {
+      name: 'addWorkspaceMembersMutation';
+      variables: AddWorkspaceMembersMutationVariables;
+      response: AddWorkspaceMembersMutation;
     }
   | {
       name: 'acceptInviteByInviteIdMutation';

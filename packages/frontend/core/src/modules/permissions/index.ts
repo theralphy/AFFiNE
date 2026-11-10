@@ -4,6 +4,10 @@ export {
   type GrantedUser,
 } from './services/doc-granted-users';
 export { GuardService } from './services/guard';
+export {
+  type MemberCandidate,
+  MemberCandidateSearchService,
+} from './services/member-candidate-search';
 export { MemberSearchService } from './services/member-search';
 export { WorkspaceMembersService } from './services/members';
 export { WorkspacePermissionService } from './services/permission';
@@ -27,6 +31,7 @@ import { WorkspaceMembers } from './entities/members';
 import { WorkspacePermission } from './entities/permission';
 import { DocGrantedUsersService } from './services/doc-granted-users';
 import { GuardService } from './services/guard';
+import { MemberCandidateSearchService } from './services/member-candidate-search';
 import { MemberSearchService } from './services/member-search';
 import { WorkspaceMembersService } from './services/members';
 import { WorkspacePermissionService } from './services/permission';
@@ -54,6 +59,10 @@ export function configurePermissionsModule(framework: Framework) {
     .store(WorkspaceMembersStore, [WorkspaceServerService, NbstoreService])
     .entity(WorkspaceMembers, [WorkspaceMembersStore, WorkspaceService])
     .service(MemberSearchService, [MemberSearchStore, WorkspaceService])
+    .service(MemberCandidateSearchService, [
+      WorkspaceMembersStore,
+      WorkspaceService,
+    ])
     .store(MemberSearchStore, [NbstoreService])
     .service(GuardService, [
       GuardStore,

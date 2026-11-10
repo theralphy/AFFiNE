@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   acceptInviteByInviteIdMutation,
+  addWorkspaceMembersMutation,
   approveWorkspaceTeamMemberMutation,
   createInviteLinkMutation,
   getInviteInfoQuery,
@@ -11,6 +12,7 @@ import {
   Permission,
   revokeMemberPermissionMutation,
   WorkspaceInviteLinkExpireTime,
+  workspaceMemberCandidatesQuery,
   WorkspaceMemberStatus,
 } from '@affine/graphql';
 import { faker } from '@faker-js/faker';
@@ -75,6 +77,21 @@ async function waitForInvitationNotification(userId: string) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   throw new Error('Invitation notification was not created');
+}
+
+/**
+ * The suite runs in cloud mode; direct membership is self-hosted only.
+ */
+async function asSelfhosted<T>(fn: () => Promise<T>) {
+  const previous = globalThis.env.DEPLOYMENT_TYPE;
+  // @ts-expect-error override
+  globalThis.env.DEPLOYMENT_TYPE = 'selfhosted';
+  try {
+    return await fn();
+  } finally {
+    // @ts-expect-error override
+    globalThis.env.DEPLOYMENT_TYPE = previous;
+  }
 }
 
 async function waitForMailTo<Mail extends MailName>(name: Mail, to: string) {
@@ -462,6 +479,126 @@ e2e(
     );
   }
 );
+
+e2e('should add registered accounts to a workspace directly', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const alice = await app.create(Mockers.User, { name: 'Alice Direct' });
+  const bob = await app.create(Mockers.User, { name: 'Bob Direct' });
+
+  await app.login(owner);
+  await asSelfhosted(async () => {
+    const { workspaceMemberCandidates } = await app.gql({
+      query: workspaceMemberCandidatesQuery,
+      variables: { workspaceId: workspace.id, query: 'Direct' },
+    });
+    t.deepEqual(
+      workspaceMemberCandidates.map(c => [c.id, c.status]).sort(),
+      [
+        [alice.id, null],
+        [bob.id, null],
+      ].sort()
+    );
+
+    const { addWorkspaceMembers } = await app.gql({
+      query: addWorkspaceMembersMutation,
+      variables: { workspaceId: workspace.id, userIds: [alice.id, bob.id] },
+    });
+    t.deepEqual(
+      addWorkspaceMembers.map(r => [r.userId, r.error ?? null]),
+      [
+        [alice.id, null],
+        [bob.id, null],
+      ]
+    );
+
+    for (const user of [alice, bob]) {
+      const member = await app
+        .get(Models)
+        .workspaceUser.get(workspace.id, user.id);
+      t.is(member?.status, WorkspaceMemberStatus.Accepted);
+      t.is(member?.type, ModelWorkspaceRole.Collaborator);
+    }
+
+    // adding again reports the conflict per user instead of failing
+    const { addWorkspaceMembers: again } = await app.gql({
+      query: addWorkspaceMembersMutation,
+      variables: { workspaceId: workspace.id, userIds: [alice.id] },
+    });
+    t.is(again[0].error?.name, 'ALREADY_IN_SPACE');
+
+    const { workspaceMemberCandidates: after } = await app.gql({
+      query: workspaceMemberCandidatesQuery,
+      variables: { workspaceId: workspace.id, query: 'Alice Direct' },
+    });
+    t.is(after[0]?.status, WorkspaceMemberStatus.Accepted);
+  });
+});
+
+e2e('should activate a pending link request when added directly', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const user = await app.create(Mockers.User);
+  await app.create(Mockers.WorkspaceUser, {
+    workspaceId: workspace.id,
+    userId: user.id,
+    status: WorkspaceMemberStatus.UnderReview,
+    kind: 'link',
+  });
+
+  await app.login(owner);
+  await asSelfhosted(async () => {
+    const { addWorkspaceMembers } = await app.gql({
+      query: addWorkspaceMembersMutation,
+      variables: { workspaceId: workspace.id, userIds: [user.id] },
+    });
+    t.falsy(addWorkspaceMembers[0].error);
+  });
+  t.is(
+    (await app.get(Models).workspaceUser.get(workspace.id, user.id))?.status,
+    WorkspaceMemberStatus.Accepted
+  );
+});
+
+e2e('should refuse direct membership outside self-hosted', async t => {
+  const { owner, workspace } = await createWorkspace();
+  const user = await app.create(Mockers.User);
+
+  await app.login(owner);
+  await t.throwsAsync(
+    app.gql({
+      query: addWorkspaceMembersMutation,
+      variables: { workspaceId: workspace.id, userIds: [user.id] },
+    }),
+    { message: /only available on self-hosted/ }
+  );
+  await t.throwsAsync(
+    app.gql({
+      query: workspaceMemberCandidatesQuery,
+      variables: { workspaceId: workspace.id },
+    }),
+    { message: /only available on self-hosted/ }
+  );
+});
+
+e2e('should require manage permission to add members directly', async t => {
+  const { workspace } = await createWorkspace();
+  const member = await app.create(Mockers.User);
+  const outsider = await app.create(Mockers.User);
+  await app.create(Mockers.WorkspaceUser, {
+    workspaceId: workspace.id,
+    userId: member.id,
+  });
+
+  await app.login(member);
+  await asSelfhosted(async () => {
+    await t.throwsAsync(
+      app.gql({
+        query: addWorkspaceMembersMutation,
+        variables: { workspaceId: workspace.id, userIds: [outsider.id] },
+      })
+    );
+  });
+  t.falsy(await app.get(Models).workspaceUser.get(workspace.id, outsider.id));
+});
 
 e2e('should approve a user on under review', async t => {
   const { owner, workspace } = await createWorkspace();

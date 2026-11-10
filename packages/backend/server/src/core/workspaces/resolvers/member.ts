@@ -8,7 +8,7 @@ import {
   ResolveField,
   Resolver,
 } from '@nestjs/graphql';
-import { WorkspaceMemberStatus } from '@prisma/client';
+import { WorkspaceMemberSource, WorkspaceMemberStatus } from '@prisma/client';
 import { nanoid } from 'nanoid';
 
 import {
@@ -49,11 +49,13 @@ import { validators } from '../../utils/validators';
 import { getAbuseRequestSource, InviteQuotaAssertService } from '../abuse';
 import { WorkspaceService } from '../service';
 import {
+  AddMemberResult,
   InvitationType,
   InviteLink,
   InviteResult,
   InviteUserType,
   WorkspaceInviteLinkExpireTime,
+  WorkspaceMemberCandidate,
   WorkspaceType,
 } from '../types';
 
@@ -340,6 +342,142 @@ export class WorkspaceMemberResolver {
     });
 
     return results;
+  }
+
+  /**
+   * Direct membership lets workspace managers add accounts that already exist
+   * on the server, skipping email invitations and link approvals. It exposes
+   * the server's account list to workspace managers, so it is limited to
+   * self-hosted deployments.
+   */
+  private assertDirectMembershipEnabled() {
+    if (!env.selfhosted) {
+      throw new ActionForbidden(
+        'Adding members directly is only available on self-hosted servers.'
+      );
+    }
+  }
+
+  @Query(() => [WorkspaceMemberCandidate], {
+    description: 'Search registered accounts that can be added to a workspace',
+  })
+  async workspaceMemberCandidates(
+    @CurrentUser() me: CurrentUser,
+    @Args('workspaceId') workspaceId: string,
+    @Args('query', { type: () => String, nullable: true }) query?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number
+  ): Promise<WorkspaceMemberCandidate[]> {
+    this.assertDirectMembershipEnabled();
+    await this.ac
+      .user(me.id)
+      .workspace(workspaceId)
+      .assert('Workspace.Users.Manage');
+    if (query && query.length > 255) {
+      throw new QueryTooLong({ max: 255 });
+    }
+
+    const users = await this.models.user.searchRegistered({
+      keyword: query,
+      skip: skip ?? 0,
+      take: Math.min(take ?? 8, 50),
+    });
+    const candidates: WorkspaceMemberCandidate[] = [];
+    for (const user of users) {
+      const role = await this.models.workspaceUser.get(workspaceId, user.id);
+      candidates.push({ ...user, status: role?.status ?? null });
+    }
+    return candidates;
+  }
+
+  @Mutation(() => [AddMemberResult], {
+    description:
+      'Add registered accounts to a workspace as collaborators without an invitation',
+  })
+  async addWorkspaceMembers(
+    @CurrentUser() me: CurrentUser,
+    @Args('workspaceId') workspaceId: string,
+    @Args({ name: 'userIds', type: () => [String] }) userIds: string[]
+  ): Promise<AddMemberResult[]> {
+    this.assertDirectMembershipEnabled();
+    await this.ac
+      .user(me.id)
+      .workspace(workspaceId)
+      .assert('Workspace.Users.Manage');
+    if (userIds.length > 512) {
+      throw new TooManyRequest();
+    }
+
+    const results: AddMemberResult[] = [];
+    let changed = false;
+    for (const userId of new Set(userIds)) {
+      try {
+        await this.addMember(me, workspaceId, userId);
+        changed = true;
+        results.push({ userId });
+      } catch (error) {
+        results.push({ userId, error: mapAnyError(error) });
+      }
+    }
+
+    if (changed) {
+      this.event.emit('workspace.members.updated', { workspaceId });
+    }
+    return results;
+  }
+
+  private async addMember(
+    me: CurrentUser,
+    workspaceId: string,
+    userId: string
+  ) {
+    const user = await this.models.user.getWorkspaceUser(userId);
+    if (!user) {
+      throw new UserNotFound();
+    }
+
+    const existing = await this.models.workspaceUser.get(workspaceId, userId);
+    if (existing?.status === WorkspaceMemberStatus.Accepted) {
+      throw new AlreadyInSpace({ spaceId: workspaceId });
+    }
+
+    // Go through the native seat reservation so seat accounting and cache
+    // invalidation stay correct, then activate the seat on the user's behalf.
+    if (!existing) {
+      const decision = await this.runtime.reserveWorkspaceSeatsV1({
+        workspaceId,
+        actorUserId: me.id,
+        targets: [{ email: user.email }],
+      });
+      if (!decision.allowed) {
+        throw new NoMoreSeat({ spaceId: workspaceId });
+      }
+      if (decision.reservations[0]?.userId !== userId) {
+        await this.models.workspaceUser.delete(workspaceId, userId);
+        throw new UserNotFound();
+      }
+    }
+
+    // A pending link request can only be activated by a manager; an email
+    // invitation only by the invitee.
+    const asManager = existing?.source === WorkspaceMemberSource.Link;
+    try {
+      await this.runtime.activateWorkspaceSeatV1({
+        workspaceId,
+        actorUserId: asManager ? me.id : userId,
+        targetUserId: userId,
+        requireManagePermission: asManager,
+      });
+    } catch (error) {
+      if (!existing) {
+        await this.models.workspaceUser.delete(workspaceId, userId);
+      }
+      this.throwSeatActivationError(
+        error,
+        workspaceId,
+        () => new MemberNotFoundInSpace({ spaceId: workspaceId })
+      );
+    }
   }
 
   @ResolveField(() => InviteLink, {

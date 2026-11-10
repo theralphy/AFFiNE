@@ -1,0 +1,19 @@
+query workspaceMemberCandidates(
+  $workspaceId: String!
+  $query: String
+  $skip: Int
+  $take: Int
+) {
+  workspaceMemberCandidates(
+    workspaceId: $workspaceId
+    query: $query
+    skip: $skip
+    take: $take
+  ) {
+    id
+    name
+    email
+    avatarUrl
+    status
+  }
+}

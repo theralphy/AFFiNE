@@ -156,6 +156,27 @@ export class InviteLink {
 }
 
 @ObjectType()
+export class WorkspaceMemberCandidate extends WorkspaceUserType {
+  @Field(() => WorkspaceMemberStatus, {
+    nullable: true,
+    description: 'Membership status, null if the user is not in the workspace',
+  })
+  status!: WorkspaceMemberStatus | null;
+}
+
+@ObjectType()
+export class AddMemberResult {
+  @Field(() => String)
+  userId!: string;
+
+  @Field(() => GraphQLJSONObject, {
+    nullable: true,
+    description: 'Add error',
+  })
+  error?: object;
+}
+
+@ObjectType()
 export class InviteResult {
   @Field(() => String)
   email!: string;

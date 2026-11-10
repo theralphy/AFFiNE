@@ -1,11 +1,11 @@
-import type { Member } from '@affine/core/modules/permissions';
 import { CloseIcon } from '@blocksuite/icons/rc';
 import { type MouseEventHandler, useCallback } from 'react';
 
+import type { PickableMember } from './member-item';
 import * as styles from './selected-member-item.css';
 
 export interface TagItemProps {
-  member: Member;
+  member: Pick<PickableMember, 'id' | 'name'>;
   idx?: number;
   onRemoved?: () => void;
   style?: React.CSSProperties;

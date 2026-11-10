@@ -1,15 +1,25 @@
 import { Avatar } from '@affine/component';
-import type { Member } from '@affine/core/modules/permissions';
 import { useCallback } from 'react';
 
 import * as styles from './member-item.css';
 
+export type PickableMember = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  /** false when the account exists on the server but not in this workspace */
+  isMember: boolean;
+};
+
 export const MemberItem = ({
   member,
+  hint,
   onSelect,
 }: {
-  member: Member;
-  onSelect: (item: Member) => void;
+  member: PickableMember;
+  hint?: string;
+  onSelect: (item: PickableMember) => void;
 }) => {
   const handleSelect = useCallback(() => {
     onSelect(member);
@@ -26,6 +36,7 @@ export const MemberItem = ({
         <div className={styles.memberInfoStyle}>
           <div className={styles.memberNameStyle}>{member.name}</div>
           <div className={styles.memberEmailStyle}>{member.email}</div>
+          {hint ? <div className={styles.memberHintStyle}>{hint}</div> : null}
         </div>
       </div>
     </div>

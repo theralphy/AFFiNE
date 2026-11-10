@@ -31,6 +31,7 @@ import { nanoid } from 'nanoid';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { SettingState } from '../../types';
+import { AddMembersModal } from './add-members-modal';
 import { MemberList, MemberListError, MemberListFallback } from './member-list';
 import * as styles from './styles.css';
 
@@ -229,6 +230,33 @@ export const CloudWorkspaceMembersPanel = ({
     [isTeam, membersService, t, workspaceQuota, workspaceQuotaService.quota]
   );
 
+  const onAddMembersConfirm = useAsyncCallback(
+    async (userIds: string[]) => {
+      if (!userIds.length) {
+        return;
+      }
+      setIsMutating(true);
+      try {
+        await membersService.addMembers(userIds);
+        notify.success({
+          title: t['com.affine.payment.member.add.notify.title'](),
+          message: t['com.affine.payment.member.add.notify.message']({
+            count: userIds.length.toString(),
+          }),
+        });
+        setOpenInvite(false);
+        membersService.members.revalidate();
+        workspaceQuotaService.quota.revalidate();
+      } catch (err) {
+        const error = UserFriendlyError.fromAny(err);
+        notify.error({ title: error.name, message: error.message });
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    [membersService, t, workspaceQuotaService.quota]
+  );
+
   const onImportCSV = useAsyncCallback(
     async (file: File) => {
       setIsMutating(true);
@@ -310,17 +338,28 @@ export const CloudWorkspaceMembersPanel = ({
                 onConfirm={handleUpgradeConfirm}
               />
             ) : null}
-            <InviteTeamMemberModal
-              open={openInvite}
-              setOpen={setOpenInvite}
-              onConfirm={onInviteBatchConfirm}
-              isMutating={isMutating}
-              copyTextToClipboard={copyTextToClipboard}
-              onGenerateInviteLink={onGenerateInviteLink}
-              onRevokeInviteLink={onRevokeInviteLink}
-              importCSV={<ImportCSV onImport={onImportCSV} />}
-              invitationLink={inviteLink}
-            />
+            {isSelfhosted ? (
+              // Self-hosted: accounts come from the admin panel and are added
+              // directly, so no email invitations or invite links.
+              <AddMembersModal
+                open={openInvite}
+                setOpen={setOpenInvite}
+                onConfirm={onAddMembersConfirm}
+                isMutating={isMutating}
+              />
+            ) : (
+              <InviteTeamMemberModal
+                open={openInvite}
+                setOpen={setOpenInvite}
+                onConfirm={onInviteBatchConfirm}
+                isMutating={isMutating}
+                copyTextToClipboard={copyTextToClipboard}
+                onGenerateInviteLink={onGenerateInviteLink}
+                onRevokeInviteLink={onRevokeInviteLink}
+                importCSV={<ImportCSV onImport={onImportCSV} />}
+                invitationLink={inviteLink}
+              />
+            )}
           </>
         ) : null}
       </SettingRow>

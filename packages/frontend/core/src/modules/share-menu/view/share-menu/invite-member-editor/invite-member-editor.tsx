@@ -8,14 +8,20 @@ import {
   RowInput,
 } from '@affine/component';
 import { useAsyncCallback } from '@affine/core/components/hooks/affine-async-hooks';
+import { ServerService } from '@affine/core/modules/cloud';
 import { WorkspaceDialogService } from '@affine/core/modules/dialogs';
 import {
   DocGrantedUsersService,
-  type Member,
+  MemberCandidateSearchService,
   MemberSearchService,
+  WorkspaceMembersService,
 } from '@affine/core/modules/permissions';
 import { UserFriendlyError } from '@affine/error';
-import { DocRole, WorkspaceMemberStatus } from '@affine/graphql';
+import {
+  DocRole,
+  ServerDeploymentType,
+  WorkspaceMemberStatus,
+} from '@affine/graphql';
 import { useI18n } from '@affine/i18n';
 import { track } from '@affine/track';
 import { ArrowLeftBigIcon } from '@blocksuite/icons/rc';
@@ -35,7 +41,7 @@ import { Virtuoso } from 'react-virtuoso';
 import { PlanTag } from '../plan-tag';
 import { Scroller } from '../scroller';
 import * as styles from './invite-member-editor.css';
-import { MemberItem } from './member-item';
+import { MemberItem, type PickableMember } from './member-item';
 import { SelectedMemberItem } from './selected-member-item';
 
 const getRoleName = (role: DocRole, t: ReturnType<typeof useI18n>) => {
@@ -51,6 +57,20 @@ const getRoleName = (role: DocRole, t: ReturnType<typeof useI18n>) => {
   }
 };
 
+/**
+ * Self-hosted servers search every registered account and add the ones that
+ * are not members yet to the workspace before granting the doc role; cloud
+ * only searches existing workspace members.
+ */
+const useIsSelfhosted = () => {
+  const serverService = useService(ServerService);
+  return useLiveData(
+    serverService.server.config$.selector(
+      c => c.type === ServerDeploymentType.Selfhosted
+    )
+  );
+};
+
 export const InviteMemberEditor = ({
   openPaywallModal,
   hittingPaywall,
@@ -61,23 +81,29 @@ export const InviteMemberEditor = ({
   onClickCancel: () => void;
 }) => {
   const t = useI18n();
-  const [selectedMembers, setSelectedMembers] = useState<Member[]>([]);
+  const [selectedMembers, setSelectedMembers] = useState<PickableMember[]>(
+    []
+  );
   const docGrantedUsersService = useService(DocGrantedUsersService);
+  const membersService = useService(WorkspaceMembersService);
   const [inviteDocRoleType, setInviteDocRoleType] = useState<DocRole>(
     DocRole.Manager
   );
 
+  const isSelfhosted = useIsSelfhosted();
   const memberSearchService = useService(MemberSearchService);
+  const candidateSearchService = useService(MemberCandidateSearchService);
+  const search = isSelfhosted ? candidateSearchService : memberSearchService;
 
   useEffect(() => {
     // reset the search text when the component is mounted
-    memberSearchService.reset();
-    memberSearchService.loadMore();
-  }, [memberSearchService]);
+    search.reset();
+    search.loadMore();
+  }, [search]);
 
   const debouncedSearch = useMemo(
-    () => debounce((value: string) => memberSearchService.search(value), 300),
-    [memberSearchService]
+    () => debounce((value: string) => search.search(value), 300),
+    [search]
   );
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,11 +124,18 @@ export const InviteMemberEditor = ({
 
   const onInvite = useAsyncCallback(async () => {
     const selectedMemberIds = selectedMembers.map(member => member.id);
+    const newMemberIds = selectedMembers
+      .filter(member => !member.isMember)
+      .map(member => member.id);
     track.$.sharePanel.$.inviteUserDocRole({
       control: 'member list',
       role: inviteDocRoleType,
     });
     try {
+      if (newMemberIds.length) {
+        await membersService.addMembers(newMemberIds);
+        membersService.members.revalidate();
+      }
       await docGrantedUsersService.grantUsersRole(
         selectedMemberIds,
         inviteDocRoleType
@@ -110,7 +143,9 @@ export const InviteMemberEditor = ({
       onClickCancel();
 
       notify.success({
-        title: t['Invitation sent'](),
+        title: newMemberIds.length
+          ? t['com.affine.share-menu.invite-editor.added']()
+          : t['Invitation sent'](),
       });
     } catch (error) {
       const err = UserFriendlyError.fromAny(error);
@@ -121,6 +156,7 @@ export const InviteMemberEditor = ({
   }, [
     docGrantedUsersService,
     inviteDocRoleType,
+    membersService,
     onClickCancel,
     selectedMembers,
     t,
@@ -165,7 +201,7 @@ export const InviteMemberEditor = ({
   }, [workspaceDialogService]);
 
   const handleClickMember = useCallback(
-    (member: Member) => {
+    (member: PickableMember) => {
       setSelectedMembers(prev => {
         if (prev.some(m => m.id === member.id)) {
           // if the member is already in the list, just return
@@ -174,10 +210,10 @@ export const InviteMemberEditor = ({
         return [...prev, member];
       });
       setSearchText('');
-      memberSearchService.search('');
+      search.search('');
       focusInput();
     },
-    [focusInput, memberSearchService]
+    [focusInput, search]
   );
 
   const handleRoleChange = useCallback((role: DocRole) => {
@@ -238,7 +274,11 @@ export const InviteMemberEditor = ({
           )}
         </div>
         <div className={styles.resultContainer}>
-          <Result onClickMember={handleClickMember} />
+          {isSelfhosted ? (
+            <CandidateResult onClickMember={handleClickMember} />
+          ) : (
+            <MemberResult onClickMember={handleClickMember} />
+          )}
         </div>
       </div>
       <div className={styles.footerStyle}>
@@ -266,40 +306,43 @@ export const InviteMemberEditor = ({
   );
 };
 
-const Result = ({
+const ResultList = ({
+  searchText,
+  isLoading,
+  members,
   onClickMember,
+  loadMore,
 }: {
-  onClickMember: (member: Member) => void;
+  searchText: string;
+  isLoading: boolean;
+  members: PickableMember[];
+  onClickMember: (member: PickableMember) => void;
+  loadMore: () => void;
 }) => {
-  const memberSearchService = useService(MemberSearchService);
-  const searchText = useLiveData(memberSearchService.searchText$);
-  const result = useLiveData(memberSearchService.result$);
-  const isLoading = useLiveData(memberSearchService.isLoading$);
-
-  const activeMembers = useMemo(() => {
-    return result.filter(
-      member => member.status === WorkspaceMemberStatus.Accepted
-    );
-  }, [result]);
-
-  const itemContentRenderer = useCallback(
-    (_index: number, data: Member) => {
-      return <MemberItem member={data} onSelect={onClickMember} />;
-    },
-    [onClickMember]
-  );
-
   const t = useI18n();
 
-  const loadMore = useCallback(() => {
-    memberSearchService.loadMore();
-  }, [memberSearchService]);
+  const itemContentRenderer = useCallback(
+    (_index: number, data: PickableMember) => {
+      return (
+        <MemberItem
+          member={data}
+          hint={
+            data.isMember
+              ? undefined
+              : t['com.affine.share-menu.invite-editor.add-to-workspace']()
+          }
+          onSelect={onClickMember}
+        />
+      );
+    },
+    [onClickMember, t]
+  );
 
   if (!searchText) {
     return null;
   }
 
-  if (!activeMembers || activeMembers.length === 0) {
+  if (members.length === 0) {
     if (isLoading) {
       return <Loading />;
     }
@@ -310,10 +353,10 @@ const Result = ({
     );
   }
 
-  return activeMembers.length < 8 ? (
+  return members.length < 8 ? (
     <div>
-      {activeMembers.map(member => (
-        <MemberItem key={member.id} member={member} onSelect={onClickMember} />
+      {members.map((member, index) => (
+        <div key={member.id}>{itemContentRenderer(index, member)}</div>
       ))}
     </div>
   ) : (
@@ -321,9 +364,72 @@ const Result = ({
       components={{
         Scroller,
       }}
-      data={activeMembers}
+      data={members}
       itemContent={itemContentRenderer}
       endReached={loadMore}
+    />
+  );
+};
+
+const MemberResult = ({
+  onClickMember,
+}: {
+  onClickMember: (member: PickableMember) => void;
+}) => {
+  const memberSearchService = useService(MemberSearchService);
+  const searchText = useLiveData(memberSearchService.searchText$);
+  const result = useLiveData(memberSearchService.result$);
+  const isLoading = useLiveData(memberSearchService.isLoading$);
+
+  const activeMembers = useMemo<PickableMember[]>(() => {
+    return result
+      .filter(member => member.status === WorkspaceMemberStatus.Accepted)
+      .map(member => ({ ...member, isMember: true }));
+  }, [result]);
+
+  const loadMore = useCallback(() => {
+    memberSearchService.loadMore();
+  }, [memberSearchService]);
+
+  return (
+    <ResultList
+      searchText={searchText}
+      isLoading={isLoading}
+      members={activeMembers}
+      onClickMember={onClickMember}
+      loadMore={loadMore}
+    />
+  );
+};
+
+const CandidateResult = ({
+  onClickMember,
+}: {
+  onClickMember: (member: PickableMember) => void;
+}) => {
+  const candidateSearchService = useService(MemberCandidateSearchService);
+  const searchText = useLiveData(candidateSearchService.searchText$);
+  const result = useLiveData(candidateSearchService.result$);
+  const isLoading = useLiveData(candidateSearchService.isLoading$);
+
+  const candidates = useMemo<PickableMember[]>(() => {
+    return result.map(candidate => ({
+      ...candidate,
+      isMember: candidate.status === WorkspaceMemberStatus.Accepted,
+    }));
+  }, [result]);
+
+  const loadMore = useCallback(() => {
+    candidateSearchService.loadMore();
+  }, [candidateSearchService]);
+
+  return (
+    <ResultList
+      searchText={searchText}
+      isLoading={isLoading}
+      members={candidates}
+      onClickMember={onClickMember}
+      loadMore={loadMore}
     />
   );
 };

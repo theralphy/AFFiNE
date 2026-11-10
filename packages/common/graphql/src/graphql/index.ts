@@ -3085,6 +3085,36 @@ export const inviteByEmailsMutation = {
 }`,
 };
 
+export const addWorkspaceMembersMutation = {
+  id: 'addWorkspaceMembersMutation' as const,
+  op: 'addWorkspaceMembers',
+  query: `mutation addWorkspaceMembers($workspaceId: String!, $userIds: [String!]!) {
+  addWorkspaceMembers(workspaceId: $workspaceId, userIds: $userIds) {
+    userId
+    error
+  }
+}`,
+};
+
+export const workspaceMemberCandidatesQuery = {
+  id: 'workspaceMemberCandidatesQuery' as const,
+  op: 'workspaceMemberCandidates',
+  query: `query workspaceMemberCandidates($workspaceId: String!, $query: String, $skip: Int, $take: Int) {
+  workspaceMemberCandidates(
+    workspaceId: $workspaceId
+    query: $query
+    skip: $skip
+    take: $take
+  ) {
+    id
+    name
+    email
+    avatarUrl
+    status
+  }
+}`,
+};
+
 export const acceptInviteByInviteIdMutation = {
   id: 'acceptInviteByInviteIdMutation' as const,
   op: 'acceptInviteByInviteId',

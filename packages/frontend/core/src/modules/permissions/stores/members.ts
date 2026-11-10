@@ -1,4 +1,5 @@
 import {
+  addWorkspaceMembersMutation,
   approveWorkspaceTeamMemberMutation,
   createInviteLinkMutation,
   grantWorkspaceTeamMemberMutation,
@@ -7,6 +8,7 @@ import {
   revokeInviteLinkMutation,
   revokeMemberPermissionMutation,
   type WorkspaceInviteLinkExpireTime,
+  workspaceMemberCandidatesQuery,
 } from '@affine/graphql';
 import { Store } from '@toeverything/infra';
 
@@ -58,6 +60,35 @@ export class WorkspaceMembersStore extends Store {
       },
     });
     return inviteBatch.inviteMembers;
+  }
+
+  async searchCandidates(
+    workspaceId: string,
+    query: string | undefined,
+    skip: number,
+    take: number,
+    signal?: AbortSignal
+  ) {
+    if (!this.workspaceServerService.server) {
+      throw new Error('No Server');
+    }
+    const result = await this.workspaceServerService.server.gql({
+      query: workspaceMemberCandidatesQuery,
+      variables: { workspaceId, query, skip, take },
+      context: { signal },
+    });
+    return result.workspaceMemberCandidates;
+  }
+
+  async addMembers(workspaceId: string, userIds: string[]) {
+    if (!this.workspaceServerService.server) {
+      throw new Error('No Server');
+    }
+    const result = await this.workspaceServerService.server.gql({
+      query: addWorkspaceMembersMutation,
+      variables: { workspaceId, userIds },
+    });
+    return result.addWorkspaceMembers;
   }
 
   async generateInviteLink(

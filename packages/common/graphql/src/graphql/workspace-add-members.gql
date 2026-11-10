@@ -1,0 +1,6 @@
+mutation addWorkspaceMembers($workspaceId: String!, $userIds: [String!]!) {
+  addWorkspaceMembers(workspaceId: $workspaceId, userIds: $userIds) {
+    userId
+    error
+  }
+}

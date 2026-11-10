@@ -25,6 +25,22 @@ export class WorkspaceMembersService extends Service {
     );
   }
 
+  /**
+   * Add existing server accounts to the workspace directly (self-hosted).
+   * Throws with the first per-user error so callers can show it.
+   */
+  async addMembers(userIds: string[]) {
+    const results = await this.store.addMembers(
+      this.workspaceService.workspace.id,
+      userIds
+    );
+    const failed = results.find(result => result.error);
+    if (failed?.error) {
+      throw failed.error;
+    }
+    return results;
+  }
+
   async generateInviteLink(expireTime: WorkspaceInviteLinkExpireTime) {
     return await this.store.generateInviteLink(
       this.workspaceService.workspace.id,

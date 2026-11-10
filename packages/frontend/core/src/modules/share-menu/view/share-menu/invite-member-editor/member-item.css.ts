@@ -52,6 +52,14 @@ export const memberEmailStyle = style({
   textOverflow: 'ellipsis',
 });
 
+export const memberHintStyle = style({
+  color: cssVarV2('text/tertiary'),
+  fontSize: cssVar('fontXs'),
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+});
+
 export const memberRoleStyle = style({
   color: cssVarV2('text/primary'),
   fontSize: cssVar('fontSm'),

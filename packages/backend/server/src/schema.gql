@@ -2,6 +2,12 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+type AddMemberResult {
+  """Add error"""
+  error: JSONObject
+  userId: String!
+}
+
 type AdminAllSharedLink {
   docId: String!
   docUpdatedAt: DateTime
@@ -1636,6 +1642,9 @@ type Mutation {
   acceptInviteById(inviteId: String!, sendAcceptMail: Boolean @deprecated(reason: "never used"), workspaceId: String @deprecated(reason: "never used")): Boolean!
   activateLicense(license: String!, workspaceId: String!): License!
 
+  """Add registered accounts to a workspace as collaborators without an invitation"""
+  addWorkspaceMembers(userIds: [String!]!, workspaceId: String!): [AddMemberResult!]!
+
   """Add a workspace artifact"""
   addWorkspaceArtifact(blob: Upload!, workspaceId: String!): CopilotWorkspaceArtifact!
 
@@ -2090,6 +2099,9 @@ type Query {
 
   """Get workspace by id"""
   workspace(id: String!): WorkspaceType!
+
+  """Search registered accounts that can be added to a workspace"""
+  workspaceMemberCandidates(query: String, skip: Int, take: Int, workspaceId: String!): [WorkspaceMemberCandidate!]!
 
   """Get workspace role permissions"""
   workspaceRolePermissions(id: String!): WorkspaceRolePermissions! @deprecated(reason: "use WorkspaceType[permissions] instead")
@@ -2973,6 +2985,16 @@ enum WorkspaceMemberStatus {
   NeedMoreSeatAndReview
   Pending
   UnderReview
+}
+
+type WorkspaceMemberCandidate {
+  avatarUrl: String
+  email: String!
+  id: String!
+  name: String!
+
+  """Membership status, null if the user is not in the workspace"""
+  status: WorkspaceMemberStatus
 }
 
 type WorkspacePermissionNotFoundDataType {

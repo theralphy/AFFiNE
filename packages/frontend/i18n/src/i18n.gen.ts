@@ -7741,6 +7741,44 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.share-menu.invite-editor.placeholder"](): string;
     /**
+      * `Not a member yet, will be added to this workspace`
+      */
+    ["com.affine.share-menu.invite-editor.add-to-workspace"](): string;
+    /**
+      * `Members added`
+      */
+    ["com.affine.share-menu.invite-editor.added"](): string;
+    /**
+      * `Add members`
+      */
+    ["com.affine.payment.member.add.title"](): string;
+    /**
+      * `Accounts are created by a server admin. Search for an account to add it to this workspace.`
+      */
+    ["com.affine.payment.member.add.description"](): string;
+    /**
+      * `Search by name or email`
+      */
+    ["com.affine.payment.member.add.placeholder"](): string;
+    /**
+      * `Add`
+      */
+    ["com.affine.payment.member.add.confirm"](): string;
+    /**
+      * `Load more`
+      */
+    ["com.affine.payment.member.add.load-more"](): string;
+    /**
+      * `Members added`
+      */
+    ["com.affine.payment.member.add.notify.title"](): string;
+    /**
+      * `{{count}} account(s) now have access to this workspace.`
+      */
+    ["com.affine.payment.member.add.notify.message"](options: {
+        readonly count: string;
+    }): string;
+    /**
       * `Notify via Email`
       */
     ["com.affine.share-menu.invite-editor.sent-email"](): string;
